@@ -1,9 +1,13 @@
--- file: src/testing/contracts/lean/AsyncDSLMath/Package/GraphTheory.lean
+-- file: src/testing/contracts/lean/AsyncDSLMath/Abstractions/GraphTheory.lean
 -- see: https://leanprover.zulipchat.com/#narrow/channel/287929-mathlib4/topic/Proving.20Graph-Theoretic.20Properties.20for.20Quiver.20Paths/with/561068414
+-- see: https://github.com/NicolasRouquette/wip-graph-theory/blob/main/Project/GraphTheory.lean
 
 import Mathlib.Combinatorics.Quiver.Path.Vertices
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Fintype.Card
+import Meta.APICoverage
+
+@[expose] public section
 
 /-!
 # Graph Theory Axioms for Path Analysis
@@ -22,7 +26,7 @@ that we axiomatize rather than prove from first principles.
 * `path_length_bounded_by_vertices`: Combines the axioms to bound arbitrary paths by vertex count
 -/
 
-namespace AsyncDSLMath.GraphTheory
+namespace AsyncDSLMath.Abstractions.GraphTheory
 
 open Quiver
 
@@ -108,7 +112,7 @@ theorem exists_simple_path_bounded (V : Type*) [DecidableEq V] [Quiver V] [Finty
   have h_q_bound := quiver_simple_path_bound V q h_simple
   exact ⟨q, h_simple, h_q_bound⟩
 
-end AsyncDSLMath.GraphTheory
+end AsyncDSLMath.Abstractions.GraphTheory
 
 /-!
 ## PathWithLength: Bridging Prop and Type
@@ -136,7 +140,7 @@ This allows us to:
 - Apply graph theory via `Quiver.Path`
 -/
 
-namespace AsyncDSLMath.GraphTheory
+namespace AsyncDSLMath.Abstractions.GraphTheory
 
 /-!
 ### PathWithLength (Prop-valued)
@@ -146,6 +150,8 @@ A path with length as an index. Lives in Prop but the length `n` is visible in t
 
 /-- A path from `a` to `b` with exactly `n` edges. Lives in Prop.
     The length `n` is an index (part of the type), not data extracted from Prop. -/
+@[api_type
+{category := .mathematicalAbstraction, coverage := .complete}]
 inductive PathWithLength {α : Type*} (r : α → α → Prop) : α → α → Nat → Prop
   | single {a b} : r a b → PathWithLength r a b 1
   | cons {a b c n} : r a b → PathWithLength r b c n → PathWithLength r a c (n + 1)
@@ -155,7 +161,12 @@ namespace PathWithLength
 variable {α : Type _} {r : α → α → Prop}
 
 /-- Append a single edge at the end -/
-theorem cons_right {a b c : α} {n : Nat} (hab : PathWithLength r a b n) (hbc : r b c) :
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+}]
+theorem PathWithLength_append {a b c : α} {n : Nat} (hab : PathWithLength r a b n) (hbc : r b c) :
     PathWithLength r a c (n + 1) := by
   induction hab with
   | single hab' =>
@@ -164,27 +175,61 @@ theorem cons_right {a b c : α} {n : Nat} (hab : PathWithLength r a b n) (hbc : 
       exact PathWithLength.cons hab' (ih hbc)
 
 /-- Convert PathWithLength to TransGen -/
-theorem to_transGen {a b : α} {n : Nat} (h : PathWithLength r a b n) :
+@[api_theorem
+{theoremKind := .soundnessProperty
+,assumes := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+,proves := #[`Relation.TransGen]
+}]
+theorem PathWithLength_soundness {a b : α} {n : Nat} (h : PathWithLength r a b n) :
     Relation.TransGen r a b := by
   induction h with
   | single hab => exact Relation.TransGen.single hab
   | cons hab _ ih => exact Relation.TransGen.trans (Relation.TransGen.single hab) ih
 
 /-- Every TransGen path can be realized as a PathWithLength for some n -/
-theorem of_transGen {a b : α} (h : Relation.TransGen r a b) :
+@[api_theorem
+{theoremKind := .completenessProperty
+,assumes := #[`Relation.TransGen, `Nat]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+}]
+theorem PathWithLength_completeness {a b : α} (h : Relation.TransGen r a b) :
     ∃ n, PathWithLength r a b n := by
   induction h with
   | single hab => exact ⟨1, PathWithLength.single hab⟩
   | tail _ hbc ih =>
       obtain ⟨n, pwl⟩ := ih
-      exact ⟨n + 1, pwl.cons_right hbc⟩
+      exact ⟨n + 1, pwl.PathWithLength_append hbc⟩
 
 /-- Head decomposition: every path starts with a single edge -/
-theorem head_decompose {a c : α} {n : Nat} (h : PathWithLength r a c n) :
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+}]
+theorem PathWithLength_head_decompose {a c : α} {n : Nat} (h : PathWithLength r a c n) :
     ∃ b, r a b ∧ (b = c ∧ n = 1 ∨ ∃ m, PathWithLength r b c m ∧ n = m + 1) := by
   cases h with
   | single hab => exact ⟨_, hab, Or.inl ⟨rfl, rfl⟩⟩
   | cons hab hbc => exact ⟨_, hab, Or.inr ⟨_, hbc, rfl⟩⟩
+
+/-- Transitivity for PathWithLength: concatenate two paths -/
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+}]
+theorem PathWithLength_trans {a b c : α} {m n : Nat}
+    (hab : PathWithLength r a b m) (hbc : PathWithLength r b c n) :
+    PathWithLength r a c (m + n) := by
+  induction hab generalizing c with
+  | single hab' =>
+      show PathWithLength r _ c (1 + n)
+      rw [Nat.add_comm]
+      exact PathWithLength.cons hab' hbc
+  | cons hab' _ ih =>
+      show PathWithLength r _ c (_ + 1 + n)
+      rw [Nat.add_assoc, Nat.add_comm 1 n, ← Nat.add_assoc]
+      exact PathWithLength.cons hab' (ih hbc)
 
 end PathWithLength
 
@@ -198,6 +243,8 @@ A path with explicit edge witnesses. Lives in Type, allowing elimination to othe
     Lives in Type, so we can eliminate to construct other Type values (like Quiver.Path).
 
     Note: We use `Type _` (not `Type*`) to ensure the inductive lives in the same universe as α. -/
+@[api_type
+{category := .mathematicalAbstraction}]
 inductive PathWithLengthData {α : Type _} (r : α → α → Prop) : α → α → Nat → Type _
   | single {a b} : r a b → PathWithLengthData r a b 1
   | cons {a b c n} : r a b → PathWithLengthData r b c n → PathWithLengthData r a c (n + 1)
@@ -207,14 +254,17 @@ namespace PathWithLengthData
 variable {α : Type _} {r : α → α → Prop}
 
 /-- The length of a PathWithLengthData equals its index -/
+@[api_def {}]
 def length' {a b : α} {n : Nat} (_ : PathWithLengthData r a b n) : Nat := n
 
 /-- Convert PathWithLengthData to PathWithLength (Type to Prop, always possible) -/
+@[api_def {}]
 def toProp {a b : α} {n : Nat} : PathWithLengthData r a b n → PathWithLength r a b n
   | .single hab => PathWithLength.single hab
   | .cons hab rest => PathWithLength.cons hab rest.toProp
 
 /-- Append a single edge at the end (analogous to PathWithLength.cons_right) -/
+@[api_def {}]
 def cons_right {a b c : α} {n : Nat} (p : PathWithLengthData r a b n) (hbc : r b c) :
     PathWithLengthData r a c (n + 1) :=
   match p with
@@ -222,9 +272,10 @@ def cons_right {a b c : α} {n : Nat} (p : PathWithLengthData r a b n) (hbc : r 
   | .cons hab rest => PathWithLengthData.cons hab (rest.cons_right hbc)
 
 /-- Convert PathWithLengthData to TransGen -/
+@[api_def {}]
 def toTransGen {a b : α} {n : Nat} (p : PathWithLengthData r a b n) :
     Relation.TransGen r a b :=
-  p.toProp.to_transGen
+  p.toProp.PathWithLength_soundness
 
 /-!
 ### Conversion to/from Quiver.Path
@@ -234,12 +285,14 @@ instance where `Hom a b` is (or contains) `r a b`.
 -/
 
 /-- Quiver instance from a relation using PLift to go from Prop to Type -/
+@[api_def {coverage := .complete}]
 def quiverOfRel (r : α → α → Prop) : Quiver α where
   Hom a b := PLift (r a b)
 
 /-- Convert PathWithLengthData to Quiver.Path.
     Note: PathWithLengthData.cons prepends an edge to the start (a → b then b → c),
     while Quiver.Path.cons appends to the end. We use Hom.toPath.comp to build correctly. -/
+@[api_def {coverage := .complete}]
 def toQuiverPath {a b : α} {n : Nat} : PathWithLengthData r a b n →
     @Quiver.Path α (quiverOfRel r) a b
   | .single hab => @Quiver.Hom.toPath α (quiverOfRel r) a b ⟨hab⟩
@@ -248,7 +301,12 @@ def toQuiverPath {a b : α} {n : Nat} : PathWithLengthData r a b n →
       @Quiver.Path.comp α (quiverOfRel r) a _ b (@Quiver.Hom.toPath α (quiverOfRel r) a _ edge) (toQuiverPath rest)
 
 /-- The length is preserved when converting to Quiver.Path -/
-theorem toQuiverPath_length {a b : α} {n : Nat} (p : PathWithLengthData r a b n) :
+@[api_theorem
+{theoremKind := .completenessProperty
+,assumes := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData, `Nat]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.quiverOfRel, `AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.toQuiverPath]
+}]
+theorem quiverOfRel_completeness {a b : α} {n : Nat} (p : PathWithLengthData r a b n) :
     @Quiver.Path.length α (quiverOfRel r) a b p.toQuiverPath = n := by
   induction p with
   | single _ => rfl
@@ -260,6 +318,7 @@ theorem toQuiverPath_length {a b : α} {n : Nat} (p : PathWithLengthData r a b n
     Note: Quiver.Path.cons appends to end: Path a c then c ⟶ b gives Path a b.
     PathWithLengthData.cons prepends to start: r a c then PathWithLengthData c b gives PathWithLengthData a b.
     So the translation needs care with the edge direction. -/
+@[api_def {coverage := .complete}]
 def ofQuiverPath {a b : α}
     (p : @Quiver.Path α (quiverOfRel r) a b) (h : @Quiver.Path.length α (quiverOfRel r) a b p ≠ 0) :
     PathWithLengthData r a b (@Quiver.Path.length α (quiverOfRel r) a b p) := by
@@ -286,12 +345,19 @@ def ofQuiverPath {a b : α}
           exact ih.cons_right e.down
 
 /-- Round-trip: Quiver.Path → PathWithLengthData → Quiver.Path preserves length -/
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,proves := #[ `AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.quiverOfRel
+            , `AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.toQuiverPath
+            , `AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.ofQuiverPath]
+}]
 theorem ofQuiverPath_toQuiverPath_length {a b : α}
     (p : @Quiver.Path α (quiverOfRel r) a b)
     (h : @Quiver.Path.length α (quiverOfRel r) a b p ≠ 0) :
     @Quiver.Path.length α (quiverOfRel r) a b (ofQuiverPath p h).toQuiverPath =
     @Quiver.Path.length α (quiverOfRel r) a b p := by
-  simp only [toQuiverPath_length]
+  simp only [quiverOfRel_completeness]
 
 end PathWithLengthData
 
@@ -308,6 +374,12 @@ We accomplish this via an auxiliary Prop that asserts existence, then use choice
 
 /-- There exists a PathWithLengthData for any PathWithLength.
     This is provable because they have the same structure - just in different universes. -/
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,assumes := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData]
+}]
 theorem PathWithLengthData.exists_of_pathWithLength {α : Type _} {r : α → α → Prop}
     {a b : α} {n : Nat} (h : PathWithLength r a b n) :
     Nonempty (PathWithLengthData r a b n) := by
@@ -319,11 +391,19 @@ theorem PathWithLengthData.exists_of_pathWithLength {α : Type _} {r : α → α
 
 /-- Given a proof that a path exists (in Prop), construct witness data (in Type).
     Uses Classical.choice since we're extracting Type data from a Prop proof. -/
+@[api_def {coverage := .complete}]
 noncomputable def PathWithLength.toData {α : Type _} {r : α → α → Prop}
     {a b : α} {n : Nat} (h : PathWithLength r a b n) : PathWithLengthData r a b n :=
   Classical.choice (PathWithLengthData.exists_of_pathWithLength h)
 
 /-- The constructed data converts back to the correct PathWithLength (by proof irrelevance) -/
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,assumes := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+,proves := #[ `AsyncDSLMath.Abstractions.GraphTheory.PathWithLengthData.toProp
+            , `AsyncDSLMath.Abstractions.GraphTheory.PathWithLength.toData]
+}]
 theorem PathWithLength.toData_toProp {α : Type _} {r : α → α → Prop}
     {a b : α} {n : Nat} (h : PathWithLength r a b n) :
     h.toData.toProp = h := by
@@ -349,7 +429,12 @@ by the number of vertices. This is proven by:
 Note: Uses the axiom that shortest paths exist with length < card, which handles
 both the a ≠ b case (simple path) and the a = b case (simple cycle).
 -/
-theorem pathWithLength_bounded_by_card {α : Type*} [DecidableEq α] [Fintype α]
+@[api_theorem
+{theoremKind := .mathematicalProperty
+,suppress := #[.ACW19]
+,proves := #[`AsyncDSLMath.Abstractions.GraphTheory.PathWithLength]
+}]
+theorem PathWithLength_bounded {α : Type*} [DecidableEq α] [Fintype α]
     (r : α → α → Prop) {a b : α} {n : Nat} (h : PathWithLength r a b n) :
     ∃ m, PathWithLength r a b m ∧ m < Fintype.card α := by
   -- Step 1: Convert to Type-valued path data
@@ -359,7 +444,7 @@ theorem pathWithLength_bounded_by_card {α : Type*} [DecidableEq α] [Fintype α
   let p_quiver : @Quiver.Path α Q a b := p_data.toQuiverPath
   -- The path has positive length (PathWithLength has minimum length 1)
   have h_pos : @Quiver.Path.length α Q a b p_quiver > 0 := by
-    have : @Quiver.Path.length α Q a b p_quiver = n := PathWithLengthData.toQuiverPath_length p_data
+    have : @Quiver.Path.length α Q a b p_quiver = n := PathWithLengthData.quiverOfRel_completeness p_data
     rw [this]
     cases h <;> omega
   -- Step 3: Apply the shortest path bound axiom
@@ -371,4 +456,4 @@ theorem pathWithLength_bounded_by_card {α : Type*} [DecidableEq α] [Fintype α
   have h_pwl := q_data.toProp
   exact ⟨@Quiver.Path.length α Q a b q, h_pwl, h_q_bound⟩
 
-end AsyncDSLMath.GraphTheory
+end AsyncDSLMath.Abstractions.GraphTheory
